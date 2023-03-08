@@ -1,8 +1,16 @@
 # JEDisasm
 
-This tool is a JEDEC decompiler for selected SPLD devices.
+This tool is a JEDEC decompiler for selected SPLD devices (PAL16/GAL16).
 
-The tool should run under any version of Python 3.
+Usage examples:
+```
+python.exe .\jedisasm.py GAL16V8 .\nucleon_video_forming_16v8.jed > .\nucleon_video_forming_16v8.pld
+```
+```
+python.exe .\jedisasm.py PAL16L8 .\examples\J102-U14-PAL16L8.JED > .\examples\J102-U14-PAL16L8.PLD
+```
+
+To compile PLD back to JED one could use [free old Atmel WinCUPL](https://www.microchip.com/design-centers/programmable-logic/spld-cpld/tools/software/wincupl).
 
 ## What's this for?
 
