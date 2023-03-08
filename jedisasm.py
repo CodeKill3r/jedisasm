@@ -602,26 +602,25 @@ class CUPLPrinter:
         except:
             self.opt = 0
     def stringize_and(self, items):
-        prefix = ''
-        postfix = ''
-        
+        out_str = ""
+        detect_nand = 0
         if self.opt == 1:
             # sort items
             items.sort()
 
             # detect NANDs and group them
-            detect_nand = True
-            for item in items:
-                if item[0] != '!':
-                    detect_nand = False
-                    break
-            if detect_nand and len(items) > 1:
-                for i in range(0, len(items)):
+            for i in range(0, len(items)):
+                if items[i][0] == '!':
                     items[i] = items[i][1:]
-                prefix = '!('
-                postfix = ')'
+                    detect_nand = i + 1
+                else:
+                    break
+            if detect_nand > 0:
+                out_str = '!(' + ' # '.join(items[:detect_nand]) + ')'
+                if detect_nand < len(items):
+                    out_str += ' & '
         
-        return prefix + ' & '.join(items) + postfix
+        return out_str + ' & '.join(items[detect_nand:])
 
     def stringize_or(self, items):
         if self.opt == 1:
