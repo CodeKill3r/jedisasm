@@ -65,13 +65,18 @@ def load_jedec_pin_map(fp):
         if cmd.startswith("QP"):
             num_pins = int(cmd[2:], 10)
             for i in range(1, num_pins + 1):
-                lines.append("PIN%02d" % (i))
+                if i == 10:
+                    lines.append("GND")
+                elif i == 20:
+                    lines.append("VCC")
+                else:
+                    lines.append("PIN%02d" % (i))
         if (cmd.startswith("NOTE PINS ")):
             pins = cmd[10:].split(' ')
             for pin in pins:
                 name, pos = pin.split(':', 1)
                 pos = pos.replace("*", "")
-                pos = int(pos)
+                pos = int(pos) - 1
                 lines[pos] = name
     return lines
 
