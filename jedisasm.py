@@ -4,6 +4,7 @@ JEDEC disassembler for "classic" PAL and GAL devices.
 
 import os.path
 import sys
+from datetime import date
 
 # JEDEC format parsing
 # Ref: http://www.pldtool.com/pdf/jesd3c_jedecfmt.pdf
@@ -621,13 +622,16 @@ class CUPLPrinter:
     def print_comment(self, text):
         print("/* "+text+" */")
         
-    def print_dev_name(self, name):
-        self.print_comment("Device name: " + name)
+    def print_dev_name(self, device):
+        self.print_comment("Device name: " + device.dev_name())
+        print("Device\t" + device.__class__.__name__ + ";")
+        print("Name\t" + device.dev_name() + ";")
+        print("Date\t" + str(date.today()) + ";")
 
 # Main and friends
 
 def generate_printout(device, printer):
-    printer.print_dev_name(device.dev_name())
+    printer.print_dev_name(device)
     print()
     
     for pin in range(1, device.pin_count+1):
