@@ -48,7 +48,7 @@ def load_jedec(fp):
             fuse_list.append(cmd[1:])
     fusemap = [default for _ in range(num_fuses)]
     for c in fuse_list:
-        pos, data = c.split(maxsplit=1)
+        pos, data = c.split(' ', 1)
         data = data.replace(" ", "")
         pos = int(pos, 10)
         for fuse, state in zip(range(pos, pos+len(data)), data):
@@ -58,6 +58,26 @@ def load_jedec(fp):
 def read_jedec(path):
     with open(path, "r") as fp:
         return load_jedec(fp)
+
+def load_jedec_pin_map(fp):
+    lines = []
+    for cmd in jedec_commands(fp):
+        if cmd.startswith("QP"):
+            num_pins = int(cmd[2:], 10)
+            for i in range(1, num_pins + 1):
+                lines.append("PIN%02d" % (i))
+        if (cmd.startswith("NOTE PINS ")):
+            pins = cmd[10:].split(' ')
+            for pin in pins:
+                name, pos = pin.split(':', 1)
+                pos = pos.replace("*", "")
+                pos = int(pos)
+                lines[pos] = name
+    return lines
+
+def read_jedec_pin_map(path):
+    with open(path, "r") as fp:
+        return load_jedec_pin_map(fp)    
 
 # Helper stuff
 
@@ -184,6 +204,8 @@ class P12L6(P16xx):
         OLMC(13, None, [(s, s+24) for s in range( 288,  384, 24)], False),
     ]
 
+    def dev_name(self):
+        return "PAL12L6"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -221,6 +243,8 @@ class P16L8(P16xx):
         OLMC(12, (1792, 1824), [(s, s+32) for s in range(1824, 2048, 32)], False),
     ]
 
+    def dev_name(self):
+        return "PAL16L8"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -256,6 +280,8 @@ class P16R4(P16xx):
         OLMC(12, (1792, 1824), [(s, s+32) for s in range(1824, 2048, 32)], False),
     ]
 
+    def dev_name(self):
+        return "PAL16R4"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -291,6 +317,8 @@ class P16R6(P16xx):
         OLMC(12, (1792, 1824), [(s, s+32) for s in range(1824, 2048, 32)], False),
     ]
 
+    def dev_name(self):
+        return "PAL16R6"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -326,6 +354,8 @@ class P16R8(P16xx):
         OLMC(12, (1792, 1824), [(s, s+32) for s in range(1824, 2048, 32)], True),
     ]
 
+    def dev_name(self):
+        return "PAL16R8"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -384,6 +414,8 @@ class G16V8MA(G16V8xx):
         if fusemap[2192] != 1 or fusemap[2193] != 1:
             raise TypeError("incorrect device chosen")
 
+    def dev_name(self):
+        return "GAL16V8MA"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -437,6 +469,8 @@ class G16V8MS(G16V8xx):
         if fusemap[2192] != 0 or fusemap[2193] != 1:
             raise TypeError("incorrect device chosen")
 
+    def dev_name(self):
+        return "GAL16V8MS"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -499,6 +533,8 @@ class G16V8AS(G16V8xx):
         if fusemap[2192] != 1 or fusemap[2193] != 0:
             raise TypeError("incorrect device chosen")
 
+    def dev_name(self):
+        return "GAL16V8AS"
     def get_input_map(self):
         return [
             ( 2, False),
@@ -545,14 +581,14 @@ class G16V8AS(G16V8xx):
         return eqns
 
 def G16V8(fusemap, pinmap):
-    if fusemap[2192] == 1 or fusemap[2193] == 0:
+    if fusemap[2192] == 1 and fusemap[2193] == 0:
         return G16V8AS(fusemap, pinmap)
-    elif fusemap[2192] == 0 or fusemap[2193] != 1:
+    elif fusemap[2192] == 0 and fusemap[2193] == 1:
         return G16V8MS(fusemap, pinmap)
-    elif fusemap[2192] == 1 or fusemap[2193] != 1:
+    elif fusemap[2192] == 1 and fusemap[2193] == 1:
         return G16V8MA(fusemap, pinmap)
     else:
-        raise TypeError("incorrect device chosen")
+        raise TypeError("incorrect device chosen, fusemap[2192]=" + str(fusemap[2192]) + ", fusemap[2193]=" + str(fusemap[2193]))
 
 # Output formatters
 
@@ -579,10 +615,16 @@ class CUPLPrinter:
 
     def print_comment(self, text):
         print("/* "+text+" */")
+        
+    def print_dev_name(self, name):
+        self.print_comment("Device name: " + name)
 
 # Main and friends
 
 def generate_printout(device, printer):
+    printer.print_dev_name(device.dev_name())
+    print()
+    
     for pin in range(1, device.pin_count+1):
         name = device.get_pin_name(pin)
         if name:
@@ -632,6 +674,8 @@ def main():
     jedec_path = sys.argv[2]
     fusemap = read_jedec(jedec_path)
     pinmap = read_pin_map(os.path.splitext(jedec_path)[0] + '.pin')
+    if (pinmap == None):
+        pinmap = read_jedec_pin_map(jedec_path)
     device_name = sys.argv[1].upper()
     try:
         device_type = device_type_map[device_name]
