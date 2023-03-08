@@ -115,7 +115,7 @@ class PALBase:
         if pinmap is not None:
             self.pinmap = pinmap
         else:
-            self.pinmap = ["PIN%02d" % x for x in range(1, 21)]
+            self.pinmap = ["PIN%02d" % x for x in range(1, len(device.pinmap) + 1)]
 
     def get_pin_name(self, pin):
         return self.pinmap[pin-1]
@@ -139,8 +139,6 @@ class PALBase:
         return []
 
 class P16xx(PALBase):
-    pin_count = 20
-
     class OLMC:
         def __init__(self, pin, oe_fuses, terms_fuses, registered):
             self.pin = pin
@@ -385,8 +383,6 @@ class G16V8xx(PALBase):
     """
     GAL16V8, common stuff
     """
-    pin_count = 20
-
     class OLMC:
         def __init__(self, pin, oe_fuses, terms_fuses, ac1_fuse, xor_fuse):
             self.pin = pin
@@ -599,10 +595,38 @@ def G16V8(fusemap, pinmap):
 # Output formatters
 
 class CUPLPrinter:
+    def __init__(self):
+        try:
+            # option for regroup and sort
+            self.opt = int(os.getenv("JEDISASM_REGROUP"))
+        except:
+            self.opt = 0
     def stringize_and(self, items):
-        return ' & '.join(items)
+        prefix = ''
+        postfix = ''
+        
+        if self.opt == 1:
+            # sort items
+            items.sort()
+
+            # detect NANDs and group them
+            detect_nand = True
+            for item in items:
+                if item[0] != '!':
+                    detect_nand = False
+                    break
+            if detect_nand and len(items) > 1:
+                for i in range(0, len(items)):
+                    items[i] = items[i][1:]
+                prefix = '!('
+                postfix = ')'
+        
+        return prefix + ' & '.join(items) + postfix
 
     def stringize_or(self, items):
+        if self.opt == 1:
+            # sort items
+            items.sort()
         return '\n  # '.join(items)
 
     def stringize_list(self, value, names):
@@ -623,7 +647,6 @@ class CUPLPrinter:
         print("/* "+text+" */")
         
     def print_dev_name(self, device):
-        self.print_comment("Device name: " + device.dev_name())
         print("Device\t" + device.__class__.__name__ + ";")
         print("Name\t" + device.dev_name() + ";")
         print("Date\t" + str(date.today()) + ";")
@@ -634,7 +657,7 @@ def generate_printout(device, printer):
     printer.print_dev_name(device)
     print()
     
-    for pin in range(1, device.pin_count+1):
+    for pin in range(1, len(device.pinmap) + 1):
         name = device.get_pin_name(pin)
         if name:
             if device.is_out_inverted(pin):
