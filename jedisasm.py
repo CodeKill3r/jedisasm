@@ -854,16 +854,13 @@ def G20V8(fusemap, pinmap):
 # Output formatters
 
 class CUPLPrinter:
-    def __init__(self):
-        try:
-            # option for regroup and sort
-            self.opt = int(os.getenv("JEDISASM_REGROUP"))
-        except:
-            self.opt = 0
+    def __init__(self, jopt):
+        self.opt=(jopt==True)
+
     def stringize_and(self, items):
         out_str = ""
         detect_nand = 0
-        if self.opt == 1:
+        if self.opt == True:
             # sort items
             items.sort()
 
@@ -882,7 +879,7 @@ class CUPLPrinter:
         return out_str + ' & '.join(items[detect_nand:])
 
     def stringize_or(self, items):
-        if self.opt == 1:
+        if self.opt == True:
             # sort items
             items.sort()
         return '\n  # '.join(items)
@@ -978,10 +975,25 @@ def main():
         except KeyError:
             raise ValueError("unknown device "+device_name)
         device = device_type(fusemap, pinmap)
-        printer = CUPLPrinter()
+        printer = CUPLPrinter(False)
         generate_printout(device, printer)
     else:
-        print("Usage: python jedisasm <device_type> <jedecfile.jed>")
+        if (len(sys.argv) == 4) and (sys.argv[2].upper()== "-OPT"):
+            jedec_path = sys.argv[3]
+            fusemap = read_jedec(jedec_path)
+            pinmap = read_pin_map(os.path.splitext(jedec_path)[0] + '.pin')
+            if (pinmap == None):
+                pinmap = read_jedec_pin_map(jedec_path)
+            device_name = sys.argv[1].upper()
+            try:
+                device_type = device_type_map[device_name]
+            except KeyError:
+                raise ValueError("unknown device "+device_name)
+            device = device_type(fusemap, pinmap)
+            printer = CUPLPrinter(True)
+            generate_printout(device, printer)        
+        else:
+            print("Usage: python jedisasm <device_type> [-opt] <jedecfile.jed>")
 
 if __name__ == '__main__':
     main()
