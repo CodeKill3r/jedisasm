@@ -9,6 +9,9 @@ from datetime import date
 # JEDEC format parsing
 # Ref: http://www.pldtool.com/pdf/jesd3c_jedecfmt.pdf
 
+def bits2a(b):
+    return ''.join(chr(int(''.join(x), 2)) for x in zip(*[iter(b)]*8))
+
 def jedec_commands(fp):
     """
     Generator function to return JEDEC commands contained in a file.
@@ -22,6 +25,8 @@ def jedec_commands(fp):
     while True:
         buffer = ""
         ch = fp.read(1)
+        if ch == '':
+            return
         while ch != "*":
             if ch == "\x03":
                 return
@@ -29,6 +34,8 @@ def jedec_commands(fp):
                 ch = " "
             buffer += ch
             ch = fp.read(1)
+            if ch == '':    #handle eof on not fully compilent JED files
+                return
         yield buffer.lstrip()
 
 def load_jedec(fp):
@@ -60,6 +67,7 @@ def read_jedec(path):
     with open(path, "r") as fp:
         return load_jedec(fp)
 
+# *** !!! need to handle bigger pin-count !!!
 def load_jedec_pin_map(fp):
     lines = []
     for cmd in jedec_commands(fp):
@@ -583,14 +591,265 @@ class G16V8AS(G16V8xx):
         return eqns
 
 def G16V8(fusemap, pinmap):
+    strsig=''.join([str(fs) for fs in fusemap[2056:2120]])
+    print(bits2a(strsig))
+    
     if fusemap[2192] == 1 and fusemap[2193] == 0:
+        print("g16v8_simp")
         return G16V8AS(fusemap, pinmap)
     elif fusemap[2192] == 0 and fusemap[2193] == 1:
+        print("g16v8_reg")
         return G16V8MS(fusemap, pinmap)
     elif fusemap[2192] == 1 and fusemap[2193] == 1:
+        print("g16v8_comp")
         return G16V8MA(fusemap, pinmap)
     else:
         raise TypeError("incorrect device chosen, fusemap[2192]=" + str(fusemap[2192]) + ", fusemap[2193]=" + str(fusemap[2193]))
+
+
+
+class G20V8xx(PALBase):
+    """
+    GAL20V8, common stuff
+    """
+    pin_count = 24
+
+    class OLMC:
+        def __init__(self, pin, oe_fuses, terms_fuses, ac1_fuse, xor_fuse):
+            self.pin = pin
+            self.oe_fuses = oe_fuses
+            self.terms_fuses = terms_fuses
+            self.ac1_fuse = ac1_fuse
+            self.xor_fuse = xor_fuse
+
+    macrocell_config = [
+        #   pin        ROW         row_len                                   AC1   XOR
+        OLMC(22, (   0,   40), [(s, s+40) for s in range(  40,  320, 40)], 2632, 2560),
+        OLMC(21, ( 320,  360), [(s, s+40) for s in range( 360,  640, 40)], 2633, 2561),
+        OLMC(20, ( 640,  680), [(s, s+40) for s in range( 680,  960, 40)], 2634, 2562),
+        OLMC(19, ( 960, 1000), [(s, s+40) for s in range(1000, 1280, 40)], 2635, 2563),
+        OLMC(18, (1280, 1320), [(s, s+40) for s in range(1320, 1600, 40)], 2636, 2564),
+        OLMC(17, (1600, 1640), [(s, s+40) for s in range(1640, 1920, 40)], 2637, 2565),
+        OLMC(16, (1920, 1960), [(s, s+40) for s in range(1960, 2240, 40)], 2638, 2566),
+        OLMC(15, (2240, 2280), [(s, s+40) for s in range(2280, 2560, 40)], 2639, 2567),
+    ]
+
+    def get_macrocell_cmt(self, config):
+        comments = []
+        comments.append("Pin %d; AC1:%d; XOR:%d" % (config.pin, self.fusemap[config.ac1_fuse], self.fusemap[config.xor_fuse]))
+        return comments
+
+
+class G20V8MA(G20V8xx):
+    """
+    GAL20V8 in Complex configuration
+    """
+    def __init__(self, fusemap, pinmap):
+        G20V8xx.__init__(self, fusemap, pinmap)
+        if fusemap[2704] != 1 or fusemap[2705] != 1:
+            raise TypeError("incorrect device chosen")
+
+    def dev_name(self):
+        return "GAL20V8MA"            
+    def get_input_map(self):
+        return [
+            ( 2, False),
+            ( 1, False),
+            ( 3, False),
+            (23, False),
+            ( 4, False),
+            (21, self.is_out_inverted(21)),
+            ( 5, False),
+            (20, self.is_out_inverted(20)),
+            ( 6, False),
+            (19, self.is_out_inverted(19)),
+            ( 7, False),
+            (18, self.is_out_inverted(18)),
+            ( 8, False),
+            (17, self.is_out_inverted(17)),
+            ( 9, False),
+            (16, self.is_out_inverted(16)),
+            (10, False),
+            (14, False),
+            (11, False),
+            (13, False)]
+
+    def is_out_inverted(self, pin):
+        for config in self.macrocell_config:
+            if config.pin == pin:
+                break
+        else:
+            return False
+        return is_term_nonzero(self.fusemap, config.oe_fuses) and not self.fusemap[config.xor_fuse]
+
+    def get_macrocell_eqns(self, config):
+        eqns = []
+        name = self.get_pin_name(config.pin)
+        if is_term_nonzero(self.fusemap, config.oe_fuses):
+            oe_terms = collect_and_terms(self.fusemap, config.oe_fuses)
+            if oe_terms:
+                eqns.append((name+".oe", oe_terms))
+        d_terms = ORList()
+        for term_fuses in config.terms_fuses:
+            if is_term_nonzero(self.fusemap, term_fuses):
+                terms = collect_and_terms(self.fusemap, term_fuses)
+                if terms:
+                    d_terms.append(terms)
+        if d_terms:
+            eqns.append((name, d_terms))
+        return eqns
+
+class G20V8MS(G20V8xx):
+    """
+    GAL20V8 in Registered configuration
+    """
+    def __init__(self, fusemap, pinmap):
+        G20V8xx.__init__(self, fusemap, pinmap)
+        if fusemap[2704] != 0 or fusemap[2705] != 1:
+            raise TypeError("incorrect device chosen")
+
+
+    def dev_name(self):
+        return "GAL20V8MS"
+    def get_input_map(self):
+        return [
+            ( 2, False),
+            (23, False),
+            ( 3, False),
+            (22, self.is_out_inverted(22)),
+            ( 4, False),
+            (21, self.is_out_inverted(21)),
+            ( 5, False),
+            (20, self.is_out_inverted(20)),
+            ( 6, False),
+            (19, self.is_out_inverted(19)),
+            ( 7, False),
+            (18, self.is_out_inverted(18)),
+            ( 8, False),
+            (17, self.is_out_inverted(17)),
+            ( 9, False),
+            (16, self.is_out_inverted(16)),
+            (10, False),
+            (15, self.is_out_inverted(15)),
+            (11, False),
+            (14, False)]
+
+    def is_out_inverted(self, pin):
+        for config in self.macrocell_config:
+            if config.pin == pin:
+                break
+        else:
+            return False
+        return not self.fusemap[config.ac1_fuse] and not self.fusemap[config.xor_fuse]
+
+    def get_macrocell_eqns(self, config):
+        eqns = []
+        name = self.get_pin_name(config.pin)
+        if is_term_nonzero(self.fusemap, config.oe_fuses):
+            oe_terms = collect_and_terms(self.fusemap, config.oe_fuses)
+        else:
+            oe_terms = ANDList()
+        d_terms = ORList()
+        for term_fuses in config.terms_fuses:
+            if is_term_nonzero(self.fusemap, term_fuses):
+                terms = collect_and_terms(self.fusemap, term_fuses)
+                if terms:
+                    d_terms.append(terms)
+
+        if self.fusemap[config.ac1_fuse]:
+            if oe_terms:
+                eqns.append((name+".oe", oe_terms))
+            if d_terms:
+                eqns.append((name, d_terms))
+        else:
+            if oe_terms:
+                d_terms.insert(0, oe_terms)
+            if d_terms:
+                eqns.append((name+".d", d_terms))
+        return eqns
+
+
+class G20V8AS(G20V8xx):
+    """
+    GAL20V8 in Simple configuration
+    """
+    def __init__(self, fusemap, pinmap):
+        G20V8xx.__init__(self, fusemap, pinmap)
+        if fusemap[2704] != 1 or fusemap[2705] != 0:
+            raise TypeError("incorrect device chosen")
+
+    def dev_name(self):
+        return "GAL20V8AS"
+    def get_input_map(self):
+        return [
+            ( 2, False),
+            ( 1, False),
+            ( 3, False),
+            (23, False),
+            ( 4, False),
+            (22, self.is_out_inverted(22)),
+            ( 5, False),
+            (21, self.is_out_inverted(21)),
+            ( 6, False),
+            (20, self.is_out_inverted(20)),
+            ( 7, False),
+            (17, self.is_out_inverted(17)),
+            ( 8, False),
+            (16, self.is_out_inverted(16)),
+            ( 9, False),
+            (15, self.is_out_inverted(15)),
+            (10, False),
+            (14, False),
+            (11, False),
+            (13, False)]
+
+    def is_out_inverted(self, pin):
+        for config in self.macrocell_config:
+            if config.pin == pin:
+                break
+        else:
+            return False
+        return not self.fusemap[config.ac1_fuse] and not self.fusemap[config.xor_fuse]
+
+    def get_macrocell_eqns(self, config):
+        eqns = []
+        if not self.fusemap[config.ac1_fuse]:
+            name = self.get_pin_name(config.pin)
+            d_terms = ORList()
+            if is_term_nonzero(self.fusemap, config.oe_fuses):
+                terms = collect_and_terms(self.fusemap, config.oe_fuses)
+                if terms:
+                    d_terms.append(terms)
+            for term_fuses in config.terms_fuses:
+                if is_term_nonzero(self.fusemap, term_fuses):
+                    terms = collect_and_terms(self.fusemap, term_fuses)
+                    if terms:
+                        d_terms.append(terms)
+            if d_terms:
+                eqns.append((name, d_terms))
+        return eqns
+
+
+def G20V8(fusemap, pinmap):
+    # print("AC0=%d" % (fusemap[2705]))
+    # print("SYN=%d" % (fusemap[2704]))
+    
+    #decode signature
+    strsig=''.join([str(fs) for fs in fusemap[2568:2633]])
+    print(bits2a(strsig))
+    
+    if fusemap[2704] == 1 and fusemap[2705] == 0:
+        print("g20v8_simp")
+        return G20V8AS(fusemap, pinmap)
+    elif fusemap[2704] == 0 and fusemap[2705] == 1:
+        print("g20v8_reg")
+        return G20V8MS(fusemap, pinmap)
+    elif fusemap[2704] == 1 and fusemap[2705] == 1:
+        print("g20v8_comp")
+        return G20V8MA(fusemap, pinmap)
+    else:
+        raise TypeError("incorrect device chosen, fusemap[2704]=" + str(fusemap[2704]) + ", fusemap[2705]=" + str(fusemap[2705]))
+
 
 # Output formatters
 
@@ -693,6 +952,11 @@ device_type_map = {
     "G16V8MA": G16V8MA,
     "G16V8MS": G16V8MS,
     "PALCE16V8": G16V8,
+    "G20V8": G20V8,
+    "GAL20V8": G20V8,
+    "G20V8AS": G20V8AS,
+    "G20V8MA": G20V8MA,
+    "G20V8MS": G20V8MS,
     "P12L6": P12L6,
     "P16R4": P16R4,
     "P16R6": P16R6,
@@ -702,19 +966,22 @@ device_type_map = {
 }
 
 def main():
-    jedec_path = sys.argv[2]
-    fusemap = read_jedec(jedec_path)
-    pinmap = read_pin_map(os.path.splitext(jedec_path)[0] + '.pin')
-    if (pinmap == None):
-        pinmap = read_jedec_pin_map(jedec_path)
-    device_name = sys.argv[1].upper()
-    try:
-        device_type = device_type_map[device_name]
-    except KeyError:
-        raise ValueError("unknown device "+device_name)
-    device = device_type(fusemap, pinmap)
-    printer = CUPLPrinter()
-    generate_printout(device, printer)
+    if len(sys.argv) == 3:
+        jedec_path = sys.argv[2]
+        fusemap = read_jedec(jedec_path)
+        pinmap = read_pin_map(os.path.splitext(jedec_path)[0] + '.pin')
+        if (pinmap == None):
+            pinmap = read_jedec_pin_map(jedec_path)
+        device_name = sys.argv[1].upper()
+        try:
+            device_type = device_type_map[device_name]
+        except KeyError:
+            raise ValueError("unknown device "+device_name)
+        device = device_type(fusemap, pinmap)
+        printer = CUPLPrinter()
+        generate_printout(device, printer)
+    else:
+        print("Usage: python jedisasm <device_type> <jedecfile.jed>")
 
 if __name__ == '__main__':
     main()
